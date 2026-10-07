@@ -78,13 +78,33 @@ def test_resolve_two_commits(repo: Path) -> None:
     assert right == Target.commit(second)
 
 
+def test_resolve_one_commit_hash(repo: Path) -> None:
+    write(repo, "README.md", "first\n")
+    first = commit(repo, "c1")
+    left, right = resolve_targets(GitRepo(repo), parse_args([first]))
+    assert left == Target.commit(first)
+    assert right.kind is TargetKind.WORKTREE
+
+
+def test_resolve_one_commit_hash_staged(repo: Path) -> None:
+    write(repo, "README.md", "first\n")
+    first = commit(repo, "c1")
+    left, right = resolve_targets(GitRepo(repo), parse_args([first, "--staged"]))
+    assert left == Target.commit(first)
+    assert right.kind is TargetKind.INDEX
+
+
 def test_help_is_handled_without_tty(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
     monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
     assert main(["--help"]) == 0
-    assert "usage: gdiff" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "usage: gdiff" in out
+    assert "gdiff HEAD" in out
+    assert "a commit hash" in out
+    assert "gdiff -- a.py b.py" in out
 
 
 def test_passthrough_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:

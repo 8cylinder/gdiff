@@ -14,6 +14,16 @@ from gdiff.gitrepo import GitError, GitRepo, Target
 
 DESCRIPTION = "A terminal UI replacement for `git diff`."
 
+EXAMPLES = """\
+examples:
+  gdiff                       working tree vs index (like `git diff`)
+  gdiff HEAD                  HEAD vs the working tree
+  gdiff 1a2b3c4               a commit hash vs the working tree
+  gdiff -- a.py b.py          limit the diff to two files
+  gdiff main feature          two commits
+  gdiff HEAD~1 HEAD -- src/   two commits, limited to a path
+"""
+
 
 @dataclass(slots=True)
 class Options:
@@ -51,7 +61,12 @@ def _context_value(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="gdiff", description=DESCRIPTION)
+    parser = argparse.ArgumentParser(
+        prog="gdiff",
+        description=DESCRIPTION,
+        epilog=EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--version",
         action="version",

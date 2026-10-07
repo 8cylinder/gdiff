@@ -7,7 +7,7 @@ from textual_diff_view import DiffView
 
 from gdiff.app import ALL_CONTEXT, DiffApp
 from gdiff.gitrepo import GitRepo, Target
-from gdiff.model import FileChange
+from gdiff.model import ChangeStatus, FileChange
 from gdiff.widgets import ContextDiffView, FileList
 
 from .conftest import commit, git, write
@@ -39,6 +39,16 @@ def _make_big_change(
     left = Target.commit("HEAD")
     right = Target.worktree()
     return git_repo, git_repo.changes(left, right), left, right
+
+
+def test_change_title_shows_both_files_for_rename() -> None:
+    renamed = FileChange(ChangeStatus.RENAMED, "old.py", "new.py")
+    assert DiffApp._change_title(renamed) == "old.py | new.py"
+
+
+def test_change_title_shows_single_file_for_modification() -> None:
+    modified = FileChange(ChangeStatus.MODIFIED, "a.py", "a.py")
+    assert DiffApp._change_title(modified) == "a.py"
 
 
 def test_subtitle_local_vs_head(repo: Path) -> None:
@@ -240,3 +250,28 @@ async def test_app_toggles_annotations(repo: Path) -> None:
         await pilot.press("A")
         await pilot.pause()
         assert app.annotations is False
+
+
+async def test_app_cycles_themes(repo: Path) -> None:
+    git_repo, changes, left, right = _make_changes(repo)
+
+    app = DiffApp(git_repo, changes, left, right)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = app.theme
+        await pilot.press("t")
+        await pilot.pause()
+        assert app.theme != before
+
+
+async def test_app_toggles_sidebar(repo: Path) -> None:
+    git_repo, changes, left, right = _make_changes(repo)
+
+    app = DiffApp(git_repo, changes, left, right)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        files = app.query_one(FileList)
+        assert not files.has_class("-hidden")
+        await pilot.press("s")
+        await pilot.pause()
+        assert files.has_class("-hidden")

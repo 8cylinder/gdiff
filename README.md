@@ -21,23 +21,48 @@ uv tool install .
 ```sh
 gdiff                       # working tree vs index (like `git diff`)
 gdiff HEAD                  # HEAD vs working tree
+gdiff 1a2b3c4               # a commit hash vs working tree
 gdiff main feature          # two commits
 gdiff --staged              # index vs HEAD
 gdiff HEAD~1 HEAD -- src/   # limit to a pathspec
+gdiff -- a.py b.py          # limit the diff to specific files
 ```
 
+Pass file paths after `--` so they are not parsed as revisions. The header
+shows the current file and the subtitle shows the two sides, e.g. `local | HEAD`
+or `local | 1a2b3c4`.
+
+`gdiff -h` prints the same examples.
+
+### Options
+
+| Option                    | Meaning                                              |
+| ------------------------- | ---------------------------------------------------- |
+| `--staged`, `--cached`    | Compare the index instead of the working tree        |
+| `-c N`, `--context N`     | Show `N` context lines around each change (`a` = all)|
+| `-M`, `--find-renames`    | Detect renames (default)                             |
+| `--no-renames`            | Disable rename detection                             |
+| `--version`               | Print the version                                    |
+
 When stdout is not a terminal (a pipe or redirect), `gdiff` delegates to
-`git diff` so it stays scriptable.
+`git diff` so it stays scriptable (a `-c`/`--context` value is translated to
+`--unified`).
 
 ### Keys
 
-| Key     | Action                    |
-| ------- | ------------------------- |
-| `n`/`p` | Next / previous file      |
-| `space` | Toggle split / unified    |
-| `a`     | Toggle +/- annotations    |
-| `w`     | Toggle word wrap          |
-| `q`     | Quit                      |
+| Key              | Action                                          |
+| ---------------- | ----------------------------------------------- |
+| `n` / `p`        | Next / previous file                            |
+| `j` / `k`        | Scroll the diff down / up (two lines)           |
+| `PageUp`/`PageDown` | Page the diff up / down                      |
+| `space`          | Toggle split / unified view                     |
+| `A`              | Toggle +/- annotations                          |
+| `w`              | Toggle word wrap                                |
+| `=` / `-`        | Show more / fewer context lines                 |
+| `a`              | Toggle all lines vs the default context         |
+| `s`              | Toggle the file sidebar                         |
+| `t`              | Cycle colour themes                             |
+| `q`              | Quit                                            |
 
 ## Development
 

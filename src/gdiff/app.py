@@ -58,7 +58,8 @@ class DiffApp(App[None]):
         Binding("w", "toggle_wrap", "Wrap"),
         Binding("n", "next_file", "Next"),
         Binding("p", "previous_file", "Previous"),
-        Binding("t", "toggle_sidebar", "Sidebar"),
+        Binding("s", "toggle_sidebar", "Sidebar"),
+        Binding("t", "cycle_theme", "Theme"),
         Binding("j", "scroll_diff_down", "Scroll down"),
         Binding("k", "scroll_diff_up", "Scroll up"),
         Binding("=", "more_context", "More context"),
@@ -115,7 +116,7 @@ class DiffApp(App[None]):
         if change.key == self._current:
             return
         self._current = change.key
-        self.title = change.display_path
+        self.title = self._change_title(change)
         self._request += 1
         request = self._request
 
@@ -159,6 +160,13 @@ class DiffApp(App[None]):
         if path is None:
             return "/dev/null"
         return f"{target.label}:{path}"
+
+    @staticmethod
+    def _change_title(change: FileChange) -> str:
+        """Title for the header bar, showing both paths for renames/copies."""
+        if change.old_path and change.new_path and change.old_path != change.new_path:
+            return f"{change.old_path} | {change.new_path}"
+        return change.display_path
 
     def _subtitle(self, left: Target, right: Target) -> str:
         """Describe the two sides, e.g. ``local | HEAD``."""
@@ -214,6 +222,15 @@ class DiffApp(App[None]):
 
     def action_toggle_sidebar(self) -> None:
         self.query_one(FileList).toggle_class("-hidden")
+
+    def action_cycle_theme(self) -> None:
+        themes = sorted(self.available_themes)
+        try:
+            index = themes.index(self.theme)
+        except ValueError:
+            index = -1
+        self.theme = themes[(index + 1) % len(themes)]
+        self.notify(f"Theme: {self.theme}", timeout=15)
 
     def action_scroll_diff_down(self) -> None:
         self.query_one("#diff-container", containers.VerticalScroll).scroll_relative(y=2)
