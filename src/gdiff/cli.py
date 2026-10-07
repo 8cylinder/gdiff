@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gdiff import __version__
-from gdiff.app import DiffApp
+from gdiff.app import ALL_CONTEXT, DiffApp
 from gdiff.gitrepo import GitError, GitRepo, Target
 
 DESCRIPTION = "A terminal UI replacement for `git diff`."
@@ -23,6 +23,7 @@ class Options:
     paths: list[str] = field(default_factory=list)
     staged: bool = False
     find_renames: bool = True
+    context: int = 3
 
 
 def _split_paths(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -30,6 +31,23 @@ def _split_paths(argv: list[str]) -> tuple[list[str], list[str]]:
         index = argv.index("--")
         return argv[:index], argv[index + 1 :]
     return argv, []
+
+
+def _non_negative_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError("context must not be negative")
+    return number
+
+
+def _context_value(value: str) -> int:
+    """Parse a context count, where ``a`` means every line in the file."""
+    if value.lower() == "a":
+        return ALL_CONTEXT
+    return _non_negative_int(value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--cached",
         action="store_true",
         help="compare staged changes instead of the working tree",
+    )
+    parser.add_argument(
+        "-c",
+        "--context",
+        type=_context_value,
+        default=3,
+        metavar="N",
+        help="show N lines of context around each change, or 'a' for the whole file (default: 3)",
     )
     rename = parser.add_mutually_exclusive_group()
     rename.add_argument(
@@ -80,6 +106,7 @@ def parse_args(argv: list[str]) -> Options:
         paths=paths,
         staged=ns.staged,
         find_renames=ns.find_renames,
+        context=ns.context,
     )
 
 
@@ -101,10 +128,41 @@ def resolve_targets(repo: GitRepo, options: Options) -> tuple[Target, Target]:
     return Target.index(), Target.worktree()
 
 
+def _extract_context(argv: list[str]) -> tuple[list[str], int | None]:
+    """Pull ``-c``/``--context`` out of ``argv`` for a plain ``git diff``."""
+    stripped: list[str] = []
+    context: int | None = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in ("-c", "--context") and index + 1 < len(argv):
+            context = _context_value(argv[index + 1])
+            index += 2
+        elif arg.startswith("--context="):
+            context = _context_value(arg.split("=", 1)[1])
+            index += 1
+        elif arg.startswith("-c") and len(arg) > 2:
+            context = _context_value(arg[2:])
+            index += 1
+        else:
+            stripped.append(arg)
+            index += 1
+    return stripped, context
+
+
 def _passthrough(argv: list[str]) -> int:
     """When stdout is not a TTY, behave like plain ``git diff``."""
     try:
-        return subprocess.call(["git", "diff", *argv])
+        args, context = _extract_context(argv)
+    except argparse.ArgumentTypeError as error:
+        print(f"gdiff: {error}", file=sys.stderr)
+        return 2
+    command = ["git", "diff"]
+    if context is not None:
+        command.append(f"--unified={context}")
+    command.extend(args)
+    try:
+        return subprocess.call(command)
     except FileNotFoundError:
         print("gdiff: git not found on PATH", file=sys.stderr)
         return 127
@@ -145,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
         print("gdiff: no changes", file=sys.stderr)
         return 0
 
-    DiffApp(repo, changes, left, right).run()
+    DiffApp(repo, changes, left, right, options.context).run()
     return 0
 
 
