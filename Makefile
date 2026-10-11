@@ -1,6 +1,6 @@
 .PHONY: install fmt lint type test check
 
-install:
+sync:
 	uv sync
 
 fmt:
@@ -20,3 +20,6 @@ check:
 	uv run ruff check .
 	uv run ty check
 	uv run pytest
+
+install:
+	uv tool install --editable --force .
