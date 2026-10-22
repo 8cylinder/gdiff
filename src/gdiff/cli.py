@@ -19,9 +19,10 @@ examples:
   gdiff                       working tree vs index (like `git diff`)
   gdiff HEAD                  HEAD vs the working tree
   gdiff 1a2b3c4               a commit hash vs the working tree
-  gdiff -- a.py b.py          limit the diff to two files
+  gdiff file1 file2           compare two files on disk
   gdiff main feature          two commits
   gdiff HEAD~1 HEAD -- src/   two commits, limited to a path
+  gdiff -- a.py b.py          limit the diff to two file paths
 """
 
 
@@ -31,9 +32,19 @@ class Options:
 
     revs: list[str] = field(default_factory=list)
     paths: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
     staged: bool = False
     find_renames: bool = True
     context: int = 3
+
+
+def _is_file_pair(args: list[str]) -> bool:
+    """Whether ``args`` are exactly two paths to existing files."""
+    return (
+        len(args) == 2
+        and not any(arg.startswith("-") for arg in args)
+        and all(Path(arg).is_file() for arg in args)
+    )
 
 
 def _split_paths(argv: list[str]) -> tuple[list[str], list[str]]:
@@ -76,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
         "revs",
         nargs="*",
         metavar="REV",
-        help="zero, one, or two revisions to compare",
+        help="zero, one, or two revisions to compare, or two files to diff",
     )
     parser.add_argument(
         "--staged",
@@ -116,9 +127,17 @@ def parse_args(argv: list[str]) -> Options:
     ns = parser.parse_args(main)
     if len(ns.revs) > 2:
         parser.error("at most two revisions may be given")
+
+    revs = ns.revs
+    files: list[str] = []
+    if _is_file_pair(revs):
+        files = revs
+        revs = []
+
     return Options(
-        revs=ns.revs,
+        revs=revs,
         paths=paths,
+        files=files,
         staged=ns.staged,
         find_renames=ns.find_renames,
         context=ns.context,
@@ -127,6 +146,9 @@ def parse_args(argv: list[str]) -> Options:
 
 def resolve_targets(repo: GitRepo, options: Options) -> tuple[Target, Target]:
     """Translate the parsed revisions into the two sides of the diff."""
+    if len(options.files) == 2:
+        return Target.file(options.files[0]), Target.file(options.files[1])
+
     if len(options.revs) == 2:
         left = Target.commit(repo.resolve(options.revs[0]))
         right = Target.commit(repo.resolve(options.revs[1]))
@@ -172,10 +194,17 @@ def _passthrough(argv: list[str]) -> int:
     except argparse.ArgumentTypeError as error:
         print(f"gdiff: {error}", file=sys.stderr)
         return 2
-    command = ["git", "diff"]
-    if context is not None:
-        command.append(f"--unified={context}")
-    command.extend(args)
+
+    if _is_file_pair(args):
+        command = ["git", "diff", "--no-index"]
+        if context is not None:
+            command.append(f"--unified={context}")
+        command.extend(["--", *args])
+    else:
+        command = ["git", "diff"]
+        if context is not None:
+            command.append(f"--unified={context}")
+        command.extend(args)
     try:
         return subprocess.call(command)
     except FileNotFoundError:
@@ -198,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
 
     options = parse_args(argv)
     repo = GitRepo(Path.cwd())
-    if not repo.is_repo():
+    if not options.files and not repo.is_repo():
         print("gdiff: not a git repository", file=sys.stderr)
         return 128
 

@@ -24,6 +24,7 @@ class TargetKind(StrEnum):
     COMMIT = "commit"
     INDEX = "index"
     WORKTREE = "worktree"
+    FILE = "file"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +36,7 @@ class Target:
 
     @property
     def label(self) -> str:
-        if self.kind is TargetKind.COMMIT:
+        if self.kind in (TargetKind.COMMIT, TargetKind.FILE):
             return self.ref or "?"
         return self.kind.value
 
@@ -50,6 +51,10 @@ class Target:
     @classmethod
     def worktree(cls) -> Target:
         return cls(TargetKind.WORKTREE)
+
+    @classmethod
+    def file(cls, path: str) -> Target:
+        return cls(TargetKind.FILE, path)
 
 
 class GitRepo:
@@ -106,6 +111,13 @@ class GitRepo:
         find_renames: bool = True,
     ) -> list[FileChange]:
         """Enumerate changed files between two targets."""
+        if left.kind is TargetKind.FILE or right.kind is TargetKind.FILE:
+            if left.kind is not TargetKind.FILE or right.kind is not TargetKind.FILE:
+                raise GitError("file comparison needs two file targets")
+            if self._file_bytes(left.ref or "") == self._file_bytes(right.ref or ""):
+                return []
+            return [FileChange(ChangeStatus.MODIFIED, left.ref, right.ref)]
+
         args = self._diff_args(left, right)
         args += ["-z", "--name-status"]
         args += ["-M"] if find_renames else ["--no-renames"]
@@ -138,10 +150,23 @@ class GitRepo:
         """
         if path is None:
             return b""
+        if target.kind is TargetKind.FILE:
+            return self._file_bytes(path)
         if target.kind is TargetKind.WORKTREE:
             return self._worktree_bytes(path)
         spec = f":{path}" if target.kind is TargetKind.INDEX else f"{target.ref or 'HEAD'}:{path}"
         return self._run(["cat-file", "blob", spec], check=False)
+
+    def _file_bytes(self, path: str) -> bytes:
+        full = Path(path)
+        if not full.is_absolute():
+            full = self.path / full
+        try:
+            if full.is_symlink():
+                return os.readlink(full).encode("utf-8", "replace")
+            return full.read_bytes()
+        except (FileNotFoundError, IsADirectoryError, PermissionError):
+            return b""
 
     def _worktree_bytes(self, path: str) -> bytes:
         full = self.root / path

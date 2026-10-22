@@ -14,6 +14,7 @@ def test_defaults() -> None:
     options = parse_args([])
     assert options.revs == []
     assert options.paths == []
+    assert options.files == []
     assert options.staged is False
     assert options.find_renames is True
 
@@ -56,6 +57,23 @@ def test_too_many_revisions() -> None:
         parse_args(["a", "b", "c"])
 
 
+def test_two_existing_files_are_compared(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    monkeypatch.chdir(repo)
+
+    options = parse_args(["a.txt", "b.txt"])
+    assert options.files == ["a.txt", "b.txt"]
+    assert options.revs == []
+
+
+def test_two_revisions_are_not_files(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(repo)
+    options = parse_args(["main", "feature"])
+    assert options.files == []
+    assert options.revs == ["main", "feature"]
+
+
 def test_resolve_default_is_index_worktree(repo: Path) -> None:
     left, right = resolve_targets(GitRepo(repo), parse_args([]))
     assert left.kind is TargetKind.INDEX
@@ -86,6 +104,16 @@ def test_resolve_one_commit_hash(repo: Path) -> None:
     assert right.kind is TargetKind.WORKTREE
 
 
+def test_resolve_two_files(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    monkeypatch.chdir(repo)
+
+    left, right = resolve_targets(GitRepo(repo), parse_args(["a.txt", "b.txt"]))
+    assert left == Target.file("a.txt")
+    assert right == Target.file("b.txt")
+
+
 def test_resolve_one_commit_hash_staged(repo: Path) -> None:
     write(repo, "README.md", "first\n")
     first = commit(repo, "c1")
@@ -104,6 +132,7 @@ def test_help_is_handled_without_tty(
     assert "usage: gdiff" in out
     assert "gdiff HEAD" in out
     assert "a commit hash" in out
+    assert "gdiff file1 file2" in out
     assert "gdiff -- a.py b.py" in out
 
 
@@ -115,6 +144,36 @@ def test_passthrough_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert main(["HEAD~1", "HEAD", "--", "a.py"]) == 0
     assert calls == [["git", "diff", "HEAD~1", "HEAD", "--", "a.py"]]
+
+
+def test_passthrough_compares_two_files(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    monkeypatch.chdir(repo)
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.subprocess.call", lambda args: calls.append(args) or 0)
+
+    assert main(["a.txt", "b.txt"]) == 0
+    assert calls == [["git", "diff", "--no-index", "--", "a.txt", "b.txt"]]
+
+
+def test_passthrough_compares_two_files_with_context(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    monkeypatch.chdir(repo)
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.subprocess.call", lambda args: calls.append(args) or 0)
+
+    assert main(["-c", "5", "a.txt", "b.txt"]) == 0
+    assert calls == [["git", "diff", "--no-index", "--unified=5", "--", "a.txt", "b.txt"]]
 
 
 def test_passthrough_translates_context(monkeypatch: pytest.MonkeyPatch) -> None:

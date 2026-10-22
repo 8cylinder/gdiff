@@ -98,6 +98,40 @@ def test_path_filter(repo: Path) -> None:
     assert [c.new_path for c in changes] == ["a.txt"]
 
 
+def test_file_targets_read_from_disk(repo: Path) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    git_repo = GitRepo(repo)
+
+    changes = git_repo.changes(Target.file("a.txt"), Target.file("b.txt"))
+    assert [(c.status, c.old_path, c.new_path) for c in changes] == [
+        (ChangeStatus.MODIFIED, "a.txt", "b.txt")
+    ]
+    assert git_repo.blob(Target.file("a.txt"), "a.txt") == b"one\n"
+    assert git_repo.blob(Target.file("b.txt"), "b.txt") == b"two\n"
+
+
+def test_file_targets_with_equal_contents_have_no_changes(repo: Path) -> None:
+    write(repo, "a.txt", "same\n")
+    write(repo, "b.txt", "same\n")
+
+    changes = GitRepo(repo).changes(Target.file("a.txt"), Target.file("b.txt"))
+    assert changes == []
+
+
+def test_file_targets_support_absolute_paths(repo: Path) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    git_repo = GitRepo(repo)
+
+    old = str(repo / "a.txt")
+    new = str(repo / "b.txt")
+    changes = git_repo.changes(Target.file(old), Target.file(new))
+    assert changes[0].old_path == old
+    assert changes[0].new_path == new
+    assert git_repo.blob(Target.file(old), old) == b"one\n"
+
+
 def test_binary_detection() -> None:
     assert not is_binary(b"plain text\n")
     assert not is_binary(b"\x89PNG\r\n\x1a\n")

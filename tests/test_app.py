@@ -41,6 +41,24 @@ def _make_big_change(
     return git_repo, git_repo.changes(left, right), left, right
 
 
+def _make_two_chunks(
+    repo: Path,
+) -> tuple[GitRepo, list[FileChange], Target, Target]:
+    lines = [f"line {i}" for i in range(120)]
+    write(repo, "chunks.py", "\n".join(lines) + "\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-m", "chunks")
+    for i in range(10, 40):
+        lines[i] = f"CHANGED {i}"
+    for i in range(80, 110):
+        lines[i] = f"CHANGED {i}"
+    write(repo, "chunks.py", "\n".join(lines) + "\n")
+    git_repo = GitRepo(repo)
+    left = Target.commit("HEAD")
+    right = Target.worktree()
+    return git_repo, git_repo.changes(left, right), left, right
+
+
 def test_change_title_shows_both_files_for_rename() -> None:
     renamed = FileChange(ChangeStatus.RENAMED, "old.py", "new.py")
     assert DiffApp._change_title(renamed) == "old.py | new.py"
@@ -69,6 +87,30 @@ def test_subtitle_local_vs_short_hash(repo: Path) -> None:
 
     app = DiffApp(git_repo, [], Target.commit(first), Target.worktree())
     assert app.sub_title == f"local | {first[:7]}"
+
+
+def test_subtitle_for_file_comparison(repo: Path) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    git_repo = GitRepo(repo)
+
+    app = DiffApp(git_repo, [], Target.file("a.txt"), Target.file("b.txt"))
+    assert app.sub_title == "a.txt | b.txt"
+
+
+async def test_app_loads_file_comparison(repo: Path) -> None:
+    write(repo, "a.txt", "one\n")
+    write(repo, "b.txt", "two\n")
+    git_repo = GitRepo(repo)
+    left = Target.file("a.txt")
+    right = Target.file("b.txt")
+    changes = git_repo.changes(left, right)
+
+    app = DiffApp(git_repo, changes, left, right)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app.title == "a.txt | b.txt"
+        assert app.query(DiffView)
 
 
 async def test_app_loads_first_diff(repo: Path) -> None:
@@ -225,6 +267,64 @@ async def test_app_pages_diff_instantly(repo: Path) -> None:
         # No animation: the position updates immediately, without a pause.
         assert container.scroll_y > 0
         await pilot.press("pageup")
+        assert container.scroll_y == 0
+
+
+async def _check_chunk_navigation(app: DiffApp, pilot, *, expected_offsets: list[int]) -> None:
+    container = app.query_one("#diff-container", containers.VerticalScroll)
+    assert len(expected_offsets) == 2
+    assert expected_offsets[1] <= container.max_scroll_y
+
+    await pilot.press("alt+n")
+    await pilot.pause()
+    assert container.scroll_y == expected_offsets[0]
+    await pilot.press("alt+n")
+    await pilot.pause()
+    assert container.scroll_y == expected_offsets[1]
+    await pilot.press("alt+p")
+    await pilot.pause()
+    assert container.scroll_y == expected_offsets[0]
+
+
+async def test_app_jumps_between_chunks(repo: Path) -> None:
+    git_repo, changes, left, right = _make_two_chunks(repo)
+    app = DiffApp(git_repo, changes, left, right, context=3)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        offsets = app.query_one(ContextDiffView).chunk_offsets()
+        await _check_chunk_navigation(app, pilot, expected_offsets=offsets)
+
+
+async def test_app_jumps_between_chunks_with_all_lines(repo: Path) -> None:
+    git_repo, changes, left, right = _make_two_chunks(repo)
+    app = DiffApp(git_repo, changes, left, right, context=3)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        offsets = app.query_one(ContextDiffView).chunk_offsets()
+        await _check_chunk_navigation(app, pilot, expected_offsets=offsets)
+
+
+async def test_app_jumps_between_chunks_in_unified_view(repo: Path) -> None:
+    git_repo, changes, left, right = _make_two_chunks(repo)
+    app = DiffApp(git_repo, changes, left, right, context=3)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        await pilot.press("space")
+        await pilot.pause()
+        offsets = app.query_one(ContextDiffView).chunk_offsets()
+        await _check_chunk_navigation(app, pilot, expected_offsets=offsets)
+
+
+async def test_app_keeps_top_when_showing_all_lines(repo: Path) -> None:
+    git_repo, changes, left, right = _make_two_chunks(repo)
+    app = DiffApp(git_repo, changes, left, right, context=3)
+    async with app.run_test(size=(80, 20)) as pilot:
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        container = app.query_one("#diff-container", containers.VerticalScroll)
         assert container.scroll_y == 0
 
 

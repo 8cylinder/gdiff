@@ -13,9 +13,7 @@ from textual_diff_view import LoadError
 
 from gdiff.gitrepo import GitError, GitRepo, Target, TargetKind, is_binary
 from gdiff.model import FileChange
-from gdiff.widgets import ContextDiffView, FileItem, FileList
-
-ALL_CONTEXT = 1 << 30
+from gdiff.widgets import ALL_CONTEXT, ContextDiffView, FileItem, FileList
 
 
 class DiffApp(App[None]):
@@ -58,6 +56,8 @@ class DiffApp(App[None]):
         Binding("w", "toggle_wrap", "Wrap"),
         Binding("n", "next_file", "Next"),
         Binding("p", "previous_file", "Previous"),
+        Binding("alt+n", "next_chunk", "Next chunk"),
+        Binding("alt+p", "previous_chunk", "Previous chunk"),
         Binding("s", "toggle_sidebar", "Sidebar"),
         Binding("t", "cycle_theme", "Theme"),
         Binding("j", "scroll_diff_down", "Scroll down"),
@@ -92,6 +92,7 @@ class DiffApp(App[None]):
         self.sub_title = self._subtitle(left, right)
         self._current: tuple[str | None, str | None] | None = None
         self._request = 0
+        self._chunk_index = -1
 
     def compose(self) -> ComposeResult:
         yield widgets.Header(show_clock=False)
@@ -116,6 +117,7 @@ class DiffApp(App[None]):
         if change.key == self._current:
             return
         self._current = change.key
+        self._chunk_index = -1
         self.title = self._change_title(change)
         self._request += 1
         request = self._request
@@ -159,6 +161,8 @@ class DiffApp(App[None]):
     def _side_label(target: Target, path: str | None) -> str:
         if path is None:
             return "/dev/null"
+        if target.kind is TargetKind.FILE:
+            return path
         return f"{target.label}:{path}"
 
     @staticmethod
@@ -170,6 +174,8 @@ class DiffApp(App[None]):
 
     def _subtitle(self, left: Target, right: Target) -> str:
         """Describe the two sides, e.g. ``local | HEAD``."""
+        if left.kind is TargetKind.FILE and right.kind is TargetKind.FILE:
+            return f"{left.label} | {right.label}"
         if left.kind is TargetKind.COMMIT and right.kind is TargetKind.COMMIT:
             return f"{self._commit_label(left)} | {self._commit_label(right)}"
         base = self._commit_label(left) if left.kind is TargetKind.COMMIT else "HEAD"
@@ -186,12 +192,15 @@ class DiffApp(App[None]):
 
     def action_toggle_split(self) -> None:
         self.split = not self.split
+        self._chunk_index = -1
 
     def action_toggle_annotations(self) -> None:
         self.annotations = not self.annotations
+        self._chunk_index = -1
 
     def action_toggle_wrap(self) -> None:
         self.wrap = not self.wrap
+        self._chunk_index = -1
 
     def action_more_context(self) -> None:
         if self.context < ALL_CONTEXT:
@@ -213,12 +222,43 @@ class DiffApp(App[None]):
         """Set the context size (the view preserves the scroll anchor)."""
         if value != self.context:
             self.context = value
+            self._chunk_index = -1
 
     def action_next_file(self) -> None:
         self.query_one(FileList).action_cursor_down()
 
     def action_previous_file(self) -> None:
         self.query_one(FileList).action_cursor_up()
+
+    def action_next_chunk(self) -> None:
+        self._scroll_to_chunk(1)
+
+    def action_previous_chunk(self) -> None:
+        self._scroll_to_chunk(-1)
+
+    def _scroll_to_chunk(self, direction: int) -> None:
+        views = list(self.query(ContextDiffView))
+        if not views:
+            return
+        offsets = views[0].chunk_offsets()
+        if not offsets:
+            return
+
+        container = self.query_one("#diff-container", containers.VerticalScroll)
+        index = self._chunk_index
+        if index < 0:
+            current = container.scroll_y
+            passed = [i for i, offset in enumerate(offsets) if offset <= current + 0.5]
+            if direction > 0:
+                index = passed[-1] + 1 if passed else 0
+            else:
+                index = passed[-1] if passed else 0
+        else:
+            index += direction
+
+        index = max(0, min(index, len(offsets) - 1))
+        self._chunk_index = index
+        container.scroll_to(y=offsets[index], animate=False)
 
     def action_toggle_sidebar(self) -> None:
         self.query_one(FileList).toggle_class("-hidden")
