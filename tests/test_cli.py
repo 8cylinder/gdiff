@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import click
 import pytest
 
+from gdiff import __version__
 from gdiff.cli import ALL_CONTEXT, main, parse_args, resolve_targets
 from gdiff.gitrepo import GitRepo, Target, TargetKind
 
@@ -48,12 +50,12 @@ def test_context_a_means_whole_file() -> None:
 
 
 def test_context_rejects_negative() -> None:
-    with pytest.raises(SystemExit):
+    with pytest.raises(click.UsageError):
         parse_args(["--context", "-1"])
 
 
 def test_too_many_revisions() -> None:
-    with pytest.raises(SystemExit):
+    with pytest.raises(click.UsageError):
         parse_args(["a", "b", "c"])
 
 
@@ -129,11 +131,52 @@ def test_help_is_handled_without_tty(
     monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
     assert main(["--help"]) == 0
     out = capsys.readouterr().out
-    assert "usage: gdiff" in out
+    assert "Usage: gdiff" in out
+    assert "-h, --help" in out
     assert "gdiff HEAD" in out
     assert "a commit hash" in out
     assert "gdiff file1 file2" in out
     assert "gdiff -- a.py b.py" in out
+
+
+def test_short_help_flag(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
+    assert main(["-h"]) == 0
+    assert "Usage: gdiff" in capsys.readouterr().out
+
+
+def test_version_is_handled_without_tty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
+    assert main(["--version"]) == 0
+    assert capsys.readouterr().out.strip() == f"gdiff {__version__}"
+
+
+def test_completions_writes_bash_script(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr("gdiff.cli.sys.stdout.isatty", lambda: False)
+    monkeypatch.setattr("gdiff.cli.sys.stdin.isatty", lambda: False)
+
+    assert main(["--completions"]) == 0
+
+    script = tmp_path / ".local/share/bash-completion/completions/gdiff"
+    assert script.is_file()
+    body = script.read_text(encoding="utf-8")
+    assert "_gdiff_completion" in body
+    assert "complete -o nosort -F _gdiff_completion gdiff" in body
+
+    out = capsys.readouterr().out
+    assert f"wrote completion script to {script}" in out
+    assert f"source it with: source {script}" in out
 
 
 def test_passthrough_when_not_tty(monkeypatch: pytest.MonkeyPatch) -> None:

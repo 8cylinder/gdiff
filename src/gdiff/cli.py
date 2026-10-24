@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-import argparse
+import os
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+import click
+from click.shell_completion import get_completion_class
 
 from gdiff import __version__
 from gdiff.app import ALL_CONTEXT, DiffApp
@@ -24,6 +28,8 @@ examples:
   gdiff HEAD~1 HEAD -- src/   two commits, limited to a path
   gdiff -- a.py b.py          limit the diff to two file paths
 """
+
+COMPLETE_VAR = "_GDIFF_COMPLETE"
 
 
 @dataclass(slots=True)
@@ -54,81 +60,153 @@ def _split_paths(argv: list[str]) -> tuple[list[str], list[str]]:
     return argv, []
 
 
-def _non_negative_int(value: str) -> int:
-    try:
-        number = int(value)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from None
-    if number < 0:
-        raise argparse.ArgumentTypeError("context must not be negative")
-    return number
-
-
 def _context_value(value: str) -> int:
     """Parse a context count, where ``a`` means every line in the file."""
     if value.lower() == "a":
         return ALL_CONTEXT
-    return _non_negative_int(value)
+    try:
+        number = int(value)
+    except ValueError:
+        raise ValueError(f"{value!r} is not an integer") from None
+    if number < 0:
+        raise ValueError("context must not be negative")
+    return number
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="gdiff",
-        description=DESCRIPTION,
-        epilog=EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+class ContextParam(click.ParamType):
+    """A non-negative context count, or ``a`` for the whole file."""
+
+    name = "N"
+
+    def convert(
+        self,
+        value: Any,
+        param: click.Parameter | None,
+        ctx: click.Context | None,
+    ) -> int:
+        if isinstance(value, int):
+            return value
+        if not isinstance(value, str):
+            self.fail(f"{value!r} is not an integer", param, ctx)
+        try:
+            return _context_value(value)
+        except ValueError as error:
+            self.fail(str(error), param, ctx)
+
+
+def _completion_path() -> Path:
+    return Path.home() / ".local/share/bash-completion/completions/gdiff"
+
+
+def _completion_script(command: click.Command) -> str:
+    completion_class = get_completion_class("bash")
+    if completion_class is None:
+        raise RuntimeError("bash completion is not available")
+    completion = completion_class(
+        cli=command,
+        ctx_args={},
+        prog_name="gdiff",
+        complete_var=COMPLETE_VAR,
     )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"gdiff {__version__}",
+    return completion.source()
+
+
+def _write_completions(ctx: click.Context, param: click.Parameter | None, value: bool) -> None:
+    """Write the bash completion script and exit."""
+    if not value or ctx.resilient_parsing:
+        return
+
+    path = _completion_path()
+    try:
+        script = _completion_script(ctx.command)
+    except (OSError, RuntimeError) as error:
+        click.echo(f"gdiff: {error}", err=True)
+        ctx.exit(1)
+        return
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(script, encoding="utf-8")
+    except OSError as error:
+        click.echo(f"gdiff: could not write {path}: {error}", err=True)
+        ctx.exit(1)
+        return
+
+    click.echo(f"wrote completion script to {path}")
+    click.echo(f"source it with: source {path}")
+    ctx.exit()
+
+
+def _check_revs(revs: list[str]) -> None:
+    if len(revs) > 2:
+        raise click.UsageError("at most two revisions may be given")
+
+
+@click.command(
+    name="gdiff",
+    help=DESCRIPTION,
+    epilog="\b\n" + EXAMPLES,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
+@click.version_option(__version__, prog_name="gdiff", message="%(prog)s %(version)s")
+@click.option(
+    "--completions",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_write_completions,
+    help="write the bash completion script and exit",
+)
+@click.option(
+    "--staged",
+    "--cached",
+    "staged",
+    is_flag=True,
+    help="compare staged changes instead of the working tree",
+)
+@click.option(
+    "-c",
+    "--context",
+    type=ContextParam(),
+    default=3,
+    show_default=True,
+    metavar="N",
+    help="show N lines of context around each change, or 'a' for the whole file",
+)
+@click.option(
+    "-M",
+    "--find-renames/--no-renames",
+    default=True,
+    help="detect renames (default) or disable rename detection",
+)
+@click.argument("revs", nargs=-1)
+@click.pass_context
+def cli(
+    ctx: click.Context,
+    revs: tuple[str, ...],
+    staged: bool,
+    context: int,
+    find_renames: bool,
+) -> int:
+    """A terminal UI replacement for `git diff`."""
+    paths: list[str] = ctx.obj if isinstance(ctx.obj, list) else []
+    return run(
+        Options(
+            revs=list(revs),
+            paths=paths,
+            staged=staged,
+            find_renames=find_renames,
+            context=context,
+        )
     )
-    parser.add_argument(
-        "revs",
-        nargs="*",
-        metavar="REV",
-        help="zero, one, or two revisions to compare, or two files to diff",
-    )
-    parser.add_argument(
-        "--staged",
-        "--cached",
-        action="store_true",
-        help="compare staged changes instead of the working tree",
-    )
-    parser.add_argument(
-        "-c",
-        "--context",
-        type=_context_value,
-        default=3,
-        metavar="N",
-        help="show N lines of context around each change, or 'a' for the whole file (default: 3)",
-    )
-    rename = parser.add_mutually_exclusive_group()
-    rename.add_argument(
-        "-M",
-        "--find-renames",
-        action="store_true",
-        dest="find_renames",
-        help="detect renames (default)",
-    )
-    rename.add_argument(
-        "--no-renames",
-        action="store_false",
-        dest="find_renames",
-        help="disable rename detection",
-    )
-    parser.set_defaults(find_renames=True)
-    return parser
 
 
 def parse_args(argv: list[str]) -> Options:
-    main, paths = _split_paths(list(argv))
-    parser = build_parser()
-    ns = parser.parse_args(main)
-    if len(ns.revs) > 2:
-        parser.error("at most two revisions may be given")
+    main_args, paths = _split_paths(list(argv))
+    ctx = cli.make_context("gdiff", main_args, obj=paths)
+    revs = list(ctx.params["revs"])
+    _check_revs(revs)
 
-    revs = ns.revs
     files: list[str] = []
     if _is_file_pair(revs):
         files = revs
@@ -138,9 +216,9 @@ def parse_args(argv: list[str]) -> Options:
         revs=revs,
         paths=paths,
         files=files,
-        staged=ns.staged,
-        find_renames=ns.find_renames,
-        context=ns.context,
+        staged=ctx.params["staged"],
+        find_renames=ctx.params["find_renames"],
+        context=ctx.params["context"],
     )
 
 
@@ -191,8 +269,8 @@ def _passthrough(argv: list[str]) -> int:
     """When stdout is not a TTY, behave like plain ``git diff``."""
     try:
         args, context = _extract_context(argv)
-    except argparse.ArgumentTypeError as error:
-        print(f"gdiff: {error}", file=sys.stderr)
+    except ValueError as error:
+        click.echo(f"gdiff: {error}", err=True)
         return 2
 
     if _is_file_pair(args):
@@ -208,27 +286,16 @@ def _passthrough(argv: list[str]) -> int:
     try:
         return subprocess.call(command)
     except FileNotFoundError:
-        print("gdiff: git not found on PATH", file=sys.stderr)
+        click.echo("gdiff: git not found on PATH", err=True)
         return 127
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = list(sys.argv[1:] if argv is None else argv)
-
-    if any(arg in ("-h", "--help") for arg in argv):
-        build_parser().print_help()
-        return 0
-    if "--version" in argv:
-        print(f"gdiff {__version__}")
-        return 0
-
-    if not (sys.stdout.isatty() and sys.stdin.isatty()):
-        return _passthrough(argv)
-
-    options = parse_args(argv)
+def run(options: Options) -> int:
+    """Run the diff viewer for the given options."""
+    _check_revs(options.revs)
     repo = GitRepo(Path.cwd())
     if not options.files and not repo.is_repo():
-        print("gdiff: not a git repository", file=sys.stderr)
+        click.echo("gdiff: not a git repository", err=True)
         return 128
 
     try:
@@ -240,15 +307,50 @@ def main(argv: list[str] | None = None) -> int:
             find_renames=options.find_renames,
         )
     except GitError as error:
-        print(f"gdiff: {error}", file=sys.stderr)
+        click.echo(f"gdiff: {error}", err=True)
         return 128
 
     if not changes:
-        print("gdiff: no changes", file=sys.stderr)
+        click.echo("gdiff: no changes", err=True)
         return 0
 
     DiffApp(repo, changes, left, right, options.context).run()
     return 0
+
+
+def _wants_click(args: list[str]) -> bool:
+    """Whether non-interactive args should be handled by click."""
+    return any(arg in ("-h", "--help", "--version", "--completions") for arg in args)
+
+
+def _invoke_click(args: list[str], paths: list[str] | None = None) -> int:
+    result = cli.main(
+        args=args,
+        prog_name="gdiff",
+        complete_var=COMPLETE_VAR,
+        standalone_mode=False,
+        obj=paths,
+    )
+    return result if isinstance(result, int) else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    main_args, paths = _split_paths(argv)
+
+    if COMPLETE_VAR in os.environ:
+        return _invoke_click(argv)
+
+    if not (sys.stdout.isatty() and sys.stdin.isatty()):
+        if _wants_click(main_args):
+            return _invoke_click(main_args)
+        return _passthrough(argv)
+
+    try:
+        return _invoke_click(main_args, paths)
+    except click.UsageError as error:
+        click.echo(f"gdiff: {error.format_message()}", err=True)
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover

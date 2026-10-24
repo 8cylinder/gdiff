@@ -5,6 +5,8 @@ description = "A terminal UI replacement for `git diff`, built with Textual."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "click>=8.1,<9",
+    "rich>=13",
     "textual>=0.80",
     "textual-diff-view>=0.1",
 ]

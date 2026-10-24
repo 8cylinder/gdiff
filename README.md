@@ -7,13 +7,26 @@ A terminal UI replacement for `git diff`, built with
 `gdiff` resolves revisions with git plumbing and renders each changed file in a
 side-by-side or unified diff view.
 
+Source: <https://github.com/8cylinder/gdiff>
+
 ## Install
 
+Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), and git.
+
+From a checkout:
+
 ```sh
-uv sync            # development
+git clone git@github.com:8cylinder/gdiff.git
+cd gdiff
+uv sync            # install dependencies
 uv run gdiff       # run from the checkout
-# or install the CLI:
-uv tool install .
+```
+
+Install the CLI as a tool:
+
+```sh
+make install       # uv tool install --editable --force .
+gdiff --version
 ```
 
 ## Usage
@@ -47,11 +60,27 @@ or `local | 1a2b3c4`.
 | `-c N`, `--context N`     | Show `N` context lines around each change (`a` = all)|
 | `-M`, `--find-renames`    | Detect renames (default)                             |
 | `--no-renames`            | Disable rename detection                             |
+| `--completions`           | Write the bash completion script and exit            |
+| `-h`, `--help`            | Print help and the examples                          |
 | `--version`               | Print the version                                    |
+
+`gdiff` has no configuration file; all options are command-line flags. The
+version is read from the package metadata generated from `pyproject.toml`.
 
 When stdout is not a terminal (a pipe or redirect), `gdiff` delegates to
 `git diff` so it stays scriptable (a `-c`/`--context` value is translated to
 `--unified`).
+
+### Shell completion
+
+```sh
+gdiff --completions
+```
+
+This writes a bash completion script to
+`~/.local/share/bash-completion/completions/gdiff`, prints the path, and tells
+you how to source it. Run the printed `source` command to enable completion in
+the current terminal.
 
 ### Keys
 
@@ -73,11 +102,12 @@ When stdout is not a terminal (a pipe or redirect), `gdiff` delegates to
 ## Development
 
 ```sh
+make sync    # uv sync
 make check   # ruff format --check, ruff check, ty check, pytest
 ```
 
-Tooling: [uv](https://docs.astral.sh/uv/), [ruff](https://docs.astral.sh/ruff/),
-and [ty](https://github.com/astral-sh/ty).
+Tooling: [uv](https://docs.astral.sh/uv/), [click](https://click.palletsprojects.com/),
+[ruff](https://docs.astral.sh/ruff/), and [ty](https://github.com/astral-sh/ty).
 
 ## License
 

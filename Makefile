@@ -1,4 +1,4 @@
-.PHONY: install fmt lint type test check
+.PHONY: sync install fmt lint type test check
 
 sync:
 	uv sync
